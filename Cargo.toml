@@ -6,4 +6,5 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.86"
 bytes = "1.7.1"
+clap = { version = "4.0", features = ["derive"] }
 crossbeam-skiplist = "0.1.3"

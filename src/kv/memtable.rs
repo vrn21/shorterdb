@@ -2,6 +2,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
+
 pub struct ShorterDB {
     pub memtable: Arc<SkipMap<Bytes, Bytes>>,
 }
@@ -24,8 +25,11 @@ impl ShorterDB {
     }
 
     pub fn delete(&self, key: &[u8]) -> Result<()> {
-        self.memtable
-            .insert(Bytes::copy_from_slice(key), Bytes::copy_from_slice(b""));
+        //when we say we delete a key, we set its value to tombstone
+        self.memtable.insert(
+            Bytes::copy_from_slice(key),
+            Bytes::copy_from_slice(b"tombstone"),
+        );
         Ok(())
     }
 }
