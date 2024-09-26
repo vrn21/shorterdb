@@ -1,5 +1,6 @@
+pub mod errors;
 pub mod kv;
-use anyhow::Result;
+// use anyhow::Result;
 use clap::{Parser, Subcommand};
 use crossbeam_skiplist::SkipMap;
 use kv::memtable::{self, ShorterDB};
@@ -24,8 +25,8 @@ enum Commands {
 fn main() {
     let mut db = ShorterDB::new();
 
-    println!("Welcome to the Key-Value Store REPL!");
-    println!("Type 'exit' to quit.");
+    println!("Welcome to the ShortDB REPL!");
+    println!("Syntax:- \n (i) set <key> <value> : maps <key> and <value> \n ");
 
     loop {
         print!("> ");
@@ -52,12 +53,16 @@ fn main() {
             }
             Some(Commands::Get { key }) => {
                 match db.get(key.as_bytes()) {
-                    Some(v) => {
+                    Ok(Some(v)) => {
                         println!("Value for key: {} found: {:?}", &key, v);
                     }
-                    None => {
+                    Ok(None) => {
+                        println!("The value for key:{}, was deleted", key);
+                    }
+                    Err(errors::ShortDBErrors::KeyNotFound) => {
                         println!("Value for Key: {} Not found!!", &key);
                     }
+                    Err(e) => println!("Some error hapend,{}", e),
                 };
             }
             Some(Commands::Delete { key }) => match db.delete(&key.as_bytes()) {
