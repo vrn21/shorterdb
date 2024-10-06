@@ -1,46 +1,153 @@
-// use anyhow::Result;
+// use std::path::Path;
+
+// // use anyhow::Result;
+// use super::{memtable::Memtable, sst::SST, wal::WAL};
+// use crate::errors::{Result, ShortDBErrors};
+// use bytes::Bytes;
+
+// pub struct ShorterDB {
+//     memtable: Memtable,
+//     wal: WAL,
+//     sst: SST,
+// }
+
+// impl ShorterDB {
+//     pub fn new() -> Self {
+//         Self {
+//             memtable: Memtable::new(),
+//             wal: WAL::new(),
+//             sst: SST::new(Path::new(".")).unwrap(),
+//         }
+//     }
+
+//     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
+//         self.memtable.get(key)
+//     }
+
+//     pub fn set(&self, key: &[u8], value: &[u8]) -> Result<()> {
+//         self.memtable.set(key, value)
+//         //check whether err(flushneeded or not) impl flush_to_sst()
+//     }
+//     pub fn delete(&self, key: &[u8]) -> Result<()> {
+//         self.memtable.delete(key)
+//         //check whether err(flushneeded or not)
+//     }
+// }
+
+use super::{
+    memtable::Memtable,
+    sst::SST,
+    wal::{WALEntry, WAL},
+};
 use crate::errors::{Result, ShortDBErrors};
 use bytes::Bytes;
-use crossbeam_skiplist::SkipMap;
-use std::sync::Arc;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 pub struct ShorterDB {
-    pub memtable: Arc<SkipMap<Bytes, Bytes>>,
+    memtable: Memtable,
+    wal: WAL,
+    sst: SST,
+    data_dir: PathBuf,
 }
 
 impl ShorterDB {
-    pub fn new() -> Self {
-        ShorterDB {
-            memtable: Arc::new(SkipMap::new()),
-        }
+    pub fn new<P: AsRef<Path>>(data_dir: P) -> Result<Self> {
+        let data_dir = data_dir.as_ref().to_path_buf();
+        fs::create_dir_all(&data_dir)?; // Ensure the data directory exists
+
+        let wal = WAL::new(&data_dir)?;
+        let sst = SST::new(&data_dir)?;
+
+        Ok(Self {
+            memtable: Memtable::new(),
+            wal,
+            sst,
+            data_dir,
+        })
     }
 
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
-        match self.memtable.get(key).map(|e| e.value().clone()) {
-            Some(v) if v == Bytes::copy_from_slice(b"tombstone") => Ok(None),
-            Some(v) => Ok(Some(v)),
-            None => Err(ShortDBErrors::KeyNotFound),
+        // First check in Memtable
+        // if let Some(value) = self.memtable.get(key) {
+        //     return Ok(Some(value));
+        // }
+        //
+
+        match self.memtable.get(key) {
+            Ok(None) => println!("data deleted"),
+            Ok(Some(v)) => {
+                return Ok(Some(v));
+            }
+            Err(ShortDBErrors::KeyNotFound) => println!("not found in mem"),
+            Err(e) => println!("something problematic happend {}", e),
         }
+
+        // If not found in Memtable, check SST
+        if let Some(value) = self.sst.get(key) {
+            return Ok(Some(value));
+        }
+
+        Err(ShortDBErrors::KeyNotFound) // Return None if not found
     }
 
-    pub fn set(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        // Insert the key-value pair into the memtable
-        self.memtable
-            .insert(Bytes::copy_from_slice(&key), Bytes::copy_from_slice(value));
+    pub fn set(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
+        // Create a new WALEntry
+        let entry = WALEntry {
+            key: Bytes::copy_from_slice(key),
+            value: Bytes::copy_from_slice(value),
+        };
 
-        // Check if the insertion was successful
-        if self.memtable.get(key).is_some() {
-            Ok(())
-        } else {
-            Err(ShortDBErrors::ValueNotSet) // Use a meaningful error
+        // Write to the WAL
+        self.wal.write(&entry)?;
+
+        // Insert into Memtable
+        self.memtable.set(key, value)?;
+
+        // Check if we need to flush Memtable to SST
+        if let Err(err) = self.memtable.set(key, value) {
+            match err {
+                ShortDBErrors::FlushNeededFromMemTable => self.flush_memtable()?,
+                _ => println!("{}", err),
+            }
         }
+
+        Ok(())
     }
-    pub fn delete(&self, key: &[u8]) -> Result<()> {
-        //when we say we delete a key, we set its value to tombstone
-        self.memtable.insert(
-            Bytes::copy_from_slice(key),
-            Bytes::copy_from_slice(b"tombstone"),
-        );
+
+    pub fn delete(&mut self, key: &[u8]) -> Result<()> {
+        // Create a tombstone entry
+        let tombstone_entry = WALEntry {
+            key: Bytes::copy_from_slice(key),
+            value: Bytes::copy_from_slice(b"tombstone"),
+        };
+
+        // Write tombstone to WAL
+        self.wal.write(&tombstone_entry)?;
+
+        // Delete from Memtable
+        self.memtable.delete(key)?;
+
+        // Check if we need to flush Memtable to SST
+        if let Err(err) = self.memtable.delete(key) {
+            match err {
+                ShortDBErrors::FlushNeededFromMemTable => self.flush_memtable()?,
+                _ => println!("{}", err),
+            }
+        }
+
+        Ok(())
+    }
+
+    fn flush_memtable(&mut self) -> Result<()> {
+        // Flush entries from Memtable to SST
+        for entry in self.memtable.memtable.iter() {
+            self.sst.set(entry.key().as_ref(), entry.value().as_ref())?;
+        }
+
+        // Clear the Memtable after flushing
+        self.memtable.clear();
+
         Ok(())
     }
 }

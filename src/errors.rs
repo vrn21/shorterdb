@@ -21,6 +21,8 @@ pub enum ShortDBErrors {
     //value is not set, it is given when we try get after set
     #[error("Value not set")]
     ValueNotSet,
+    #[error("We need to flush to sst, Max size for Memtable reached")]
+    FlushNeededFromMemTable,
 }
 
 /// Result type for kvs.
