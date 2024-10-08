@@ -30,7 +30,7 @@ impl Memtable {
             .insert(Bytes::copy_from_slice(&key), Bytes::copy_from_slice(value));
         // let mut size = *self.size.lock().unwrap();
         self.size += 1;
-        dbg!(self.size);
+        // dbg!(self.size);
         // Check if the insertion was successful
         if self.memtable.get(key).is_some() {
             if self.size >= 256 {
@@ -63,4 +63,6 @@ impl Memtable {
         // *self.size.lock().unwrap() = 0;
         self.size = 0;
     }
+
+    pub fn freeze(&self) {}
 }
