@@ -21,11 +21,11 @@ impl WAL {
     }
 
     pub(crate) fn write(&mut self, entry: &WALEntry) -> io::Result<()> {
-        self.file.write_all(&entry.key.len().to_le_bytes())?; // Key length
-        self.file.write_all(entry.key.as_ref())?; // Key
-        self.file.write_all(&entry.value.len().to_le_bytes())?; // Value length
-        self.file.write_all(entry.value.as_ref())?; // Value
-        self.file.flush()?; // Ensure data is written to disk
+        self.file.write_all(&entry.key.len().to_le_bytes())?;
+        self.file.write_all(entry.key.as_ref())?;
+        self.file.write_all(&entry.value.len().to_le_bytes())?;
+        self.file.write_all(entry.value.as_ref())?;
+        self.file.flush()?;
         Ok(())
     }
 

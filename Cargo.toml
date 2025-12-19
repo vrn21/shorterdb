@@ -19,31 +19,21 @@ anyhow = "1.0.86"
 bytes = "1.7.1"
 clap = { version = "4.0", features = ["derive"] }
 crossbeam-skiplist = "0.1.3"
-csv = "1.3.0"
-flate2 = "1.0.34"
-rand = "0.8.5"
 thiserror = "1.0.63"
 tonic = "0.11"
-tokio = { version = "1", features = ["full"] }
-tonic-reflection = "0.11"
-prost = "0.12.3"
 tonic-web = "0.11"
-tower-http = "0.4"
-memmap2 = "0.9.5"
-parking_lot = { version = "0.12.3", features = ["arc_lock"] }
-bincode = "1.3.3"
-bloomfilter = { version = "1.0.14", features = ["serde"] }
-serde = { version = "1.0.210", features = ["derive", "rc"] }
-crossbeam-channel = "0.5.13"
+tokio = { version = "1", features = ["full"] }
+prost = "0.12.3"
+tower-http = { version = "0.3", features = ["cors"] }
 
 [build-dependencies]
 tonic-build = "0.11"
 
 [[bin]]
 name = "server"
-path = "src/server.rs"
+path = "src/bin/server.rs"
 
 
 [[bin]]
 name = "repl"
-path = "src/repl.rs"
+path = "src/bin/repl.rs"

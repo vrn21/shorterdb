@@ -26,33 +26,27 @@ impl Memtable {
     }
 
     pub(crate) fn set(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
-        // Insert the key-value pair into the memtable
         self.memtable
             .insert(Bytes::copy_from_slice(&key), Bytes::copy_from_slice(value));
-        // let mut size = *self.size.lock().unwrap();
         self.size += 1;
-        dbg!(self.size);
-        // Check if the insertion was successful
+        // dbg!(self.size);
         if self.memtable.get(key).is_some() {
             if self.size >= 256 {
-                return Err(ShortDBErrors::FlushNeededFromMemTable); // Indicate that a flush is needed
+                return Err(ShortDBErrors::FlushNeededFromMemTable);
             }
             Ok(())
         } else {
-            Err(ShortDBErrors::ValueNotSet) // Use a meaningful error
+            Err(ShortDBErrors::ValueNotSet)
         }
     }
     pub(crate) fn delete(&mut self, key: &[u8]) -> Result<()> {
-        //when we say we delete a key, we set its value to tombstone
         self.memtable.insert(
             Bytes::copy_from_slice(key),
             Bytes::copy_from_slice(b"tombstone"),
         );
 
-        // let mut size = *self.size.lock().unwrap();
         self.size += 1;
 
-        // Check if the insertion was successful
         if self.size >= 256 {
             return Err(ShortDBErrors::FlushNeededFromMemTable); // Indicate that a flush is needed
         }

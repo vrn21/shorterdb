@@ -7,12 +7,9 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use kv::db::ShorterDB;
+use shorterdb::kv::db::ShorterDB;
 use std::io::{self, Write};
 use std::path::Path;
-
-pub mod errors;
-pub mod kv;
 
 #[derive(Parser)]
 #[command(name = "shortdb")]
@@ -67,7 +64,7 @@ fn main() -> Result<()> {
                     Ok(None) => {
                         println!("The value for key:{}, was deleted", key);
                     }
-                    Err(errors::ShortDBErrors::KeyNotFound) => {
+                    Err(shorterdb::errors::ShortDBErrors::KeyNotFound) => {
                         println!("Value for Key: {} Not found!!", &key);
                     }
                     Err(e) => println!("Some error happened, {}", e),

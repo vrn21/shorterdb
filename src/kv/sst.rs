@@ -2,13 +2,10 @@ use std::{
     collections::VecDeque,
     fs::{self, create_dir, remove_file, OpenOptions},
     io::Write,
-    path::{self, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 use std::fs::File;
-use std::io::{BufReader, Read};
-
-// use anyhow::Error;
 
 use anyhow::Error;
 
@@ -28,7 +25,6 @@ impl SST {
         let dir;
         match create_dir("./".to_string() + &db_name) {
             Ok(()) => {
-                //dir had to be created.
                 dir = PathBuf::from("./".to_string() + &db_name);
                 let mut l0 = dir.clone();
                 l0.push("./l0");
@@ -48,7 +44,6 @@ impl SST {
                 }
             }
             Err(e) => {
-                //dir already exists
                 dir = PathBuf::from("./".to_string() + &db_name);
 
                 let children = dir.read_dir().unwrap();
@@ -82,31 +77,23 @@ impl SST {
 
     pub(crate) fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
         dbg!("looking in sst");
-        //get from sst
         for level in self.levels.iter() {
             dbg!(&level);
-            //get from level
             let ssts: fs::ReadDir = level.read_dir().unwrap();
             for sst in ssts {
                 let mut directory = level.clone();
                 let name = bytes_to_string(key);
                 directory.push(name.clone());
-                //get from sst
                 match Path::new(&directory).try_exists() {
-                    Ok(true) => {
-                        //file exists in this sst folder
-                        match fs::read(directory) {
-                            Ok(val) => {
-                                return Some(val);
-                            }
-                            Err(e) => {
-                                println!("some error happend{}", e);
-                            }
+                    Ok(true) => match fs::read(directory) {
+                        Ok(val) => {
+                            return Some(val);
                         }
-                    }
-                    Ok(false) => {
-                        //continue
-                    }
+                        Err(e) => {
+                            println!("some error happend{}", e);
+                        }
+                    },
+                    Ok(false) => {}
                     Err(e) => {
                         println!("error while seeking into sst files{}", e);
                     }
@@ -119,7 +106,6 @@ impl SST {
     pub(crate) fn set(&mut self) {
         let mem = self.queue.pop_front().unwrap();
 
-        // Use iter() and access key and value from each entry
         for entry in mem.memtable.iter() {
             let key = entry.key();
             let value = entry.value();
@@ -140,11 +126,9 @@ impl SST {
             let mut file = File::create_new(&path_of_kv_file);
             match file {
                 Ok(_) => {
-                    //file was not there
                     file.unwrap().write_all(value).unwrap();
                 }
                 Err(_) => {
-                    //file was there overwrite file
                     print!("most probably already existing");
                     let mut file = OpenOptions::new()
                         .write(true)

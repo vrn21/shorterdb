@@ -12,16 +12,14 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tonic::transport::Server;
 
-pub mod errors;
-pub mod kv;
-use kv::db::ShorterDB;
+use shorterdb::kv::db::ShorterDB;
 
 mod proto {
     tonic::include_proto!("commands");
 }
 
 struct DbOperations {
-    db: Arc<Mutex<ShorterDB>>, // Add ShorterDB to the struct
+    db: Arc<Mutex<ShorterDB>>,
 }
 
 #[tonic::async_trait]
