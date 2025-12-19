@@ -3,3 +3,7 @@ data.csv
 db_test
 .ropeproject/
 target
+Cargo.lock
+test_db/
+.DS_Store
+*/.DS_Store
