@@ -1,10 +1,9 @@
 use super::{
     memtable::{Memtable, Value},
     sst::SST,
-    wal::{WALEntry, WAL},
+    wal::{WalEntry, WalOp, WAL},
 };
 use crate::errors::Result;
-use bytes::Bytes;
 use std::fs;
 use std::path::Path;
 
@@ -39,7 +38,7 @@ impl ShorterDB {
         fs::create_dir_all(data_dir)?;
 
         // Open WAL
-        let wal = WAL::new(data_dir)?;
+        let wal = WAL::open(data_dir)?;
 
         // Open SST
         let sst = SST::open(format!("{:?}", data_dir));
@@ -47,13 +46,13 @@ impl ShorterDB {
         // Create memtable with size limit
         let memtable = Memtable::new(memtable_size);
 
-        // TODO: Recover from WAL (only entries since last flush)
-        // for entry in wal.read_entries()? {
-        //     match entry.op {
-        //         WalOp::Set => memtable.set(&entry.key, &entry.value),
-        //         WalOp::Delete => memtable.delete(&entry.key),
-        //     }
-        // }
+        // Recover from WAL (entries since last flush)
+        for entry in wal.read_entries()? {
+            match entry.op {
+                WalOp::Set => memtable.set(&entry.key, &entry.value),
+                WalOp::Delete => memtable.delete(&entry.key),
+            }
+        }
 
         Ok(Self { memtable, wal, sst })
     }
@@ -80,11 +79,7 @@ impl ShorterDB {
         let value = value.as_ref();
 
         // 1. Write to WAL first (durability)
-        let entry = WALEntry {
-            key: Bytes::copy_from_slice(key),
-            value: Bytes::copy_from_slice(value),
-        };
-        self.wal.write(&entry)?;
+        self.wal.write(&WalEntry::set(key, value))?;
 
         // 2. Write to memtable
         self.memtable.set(key, value);
@@ -107,11 +102,7 @@ impl ShorterDB {
         let existed = self.get(key)?.is_some();
 
         // 1. Write tombstone to WAL
-        let tombstone_entry = WALEntry {
-            key: Bytes::copy_from_slice(key),
-            value: Bytes::copy_from_slice(b"tombstone"), // WAL still uses bytes for now
-        };
-        self.wal.write(&tombstone_entry)?;
+        self.wal.write(&WalEntry::delete(key))?;
 
         // 2. Write tombstone to memtable
         self.memtable.delete(key);
@@ -131,8 +122,8 @@ impl ShorterDB {
             self.flush_memtable()?;
         }
 
-        // Sync WAL (best effort for now)
-        // TODO: Add sync method to WAL
+        // Sync WAL
+        self.wal.sync()?;
 
         Ok(())
     }
@@ -146,14 +137,13 @@ impl ShorterDB {
         // Get max_size before taking ownership of memtable
         let max_size = self.memtable.max_size();
 
-        // 1. Write memtable to SST - SST's set() will iterate over entries directly
-        // Swap the current memtable with a fresh one
+        // 1. Write memtable to SST
         let old_memtable = std::mem::replace(&mut self.memtable, Memtable::new(max_size));
         self.sst.queue.push_back(old_memtable);
         self.sst.set();
 
-        // 2. TODO: Rotate WAL (delete old entries that are now in SST)
-        // self.wal.rotate()?;
+        // 2. Rotate WAL (data is now in SST)
+        self.wal.rotate()?;
 
         Ok(())
     }
