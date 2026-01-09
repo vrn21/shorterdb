@@ -1,6 +1,6 @@
 use super::{
     memtable::{Memtable, Value},
-    sst::SST,
+    sst::{SstValue, SST},
     wal::{WalEntry, WalOp, WAL},
 };
 use crate::errors::Result;
@@ -41,10 +41,10 @@ impl ShorterDB {
         let wal = WAL::open(data_dir)?;
 
         // Open SST
-        let sst = SST::open(format!("{:?}", data_dir));
+        let sst = SST::open(data_dir)?;
 
-        // Create memtable with size limit
-        let memtable = Memtable::new(memtable_size);
+        // Create memtable with size limit (minimum 1KB to prevent pathological flush behavior)
+        let memtable = Memtable::new(memtable_size.max(1024));
 
         // Recover from WAL (entries since last flush)
         for entry in wal.read_entries()? {
@@ -61,7 +61,7 @@ impl ShorterDB {
     pub fn get(&self, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>> {
         let key = key.as_ref();
 
-        // 1. Check memtable first
+        // 1. Check memtable first (newest data)
         if let Some(value) = self.memtable.get(key) {
             return match value {
                 Value::Data(bytes) => Ok(Some(bytes.to_vec())),
@@ -69,8 +69,12 @@ impl ShorterDB {
             };
         }
 
-        // 2. Check SST
-        Ok(self.sst.get(key))
+        // 2. Check SST (older data)
+        match self.sst.get(key)? {
+            Some(SstValue::Data(bytes)) => Ok(Some(bytes)),
+            Some(SstValue::Tombstone) => Ok(None),
+            None => Ok(None),
+        }
     }
 
     /// Set a key-value pair.
@@ -134,16 +138,14 @@ impl ShorterDB {
             return Ok(());
         }
 
-        // Get max_size before taking ownership of memtable
-        let max_size = self.memtable.max_size();
-
-        // 1. Write memtable to SST
-        let old_memtable = std::mem::replace(&mut self.memtable, Memtable::new(max_size));
-        self.sst.queue.push_back(old_memtable);
-        self.sst.set();
+        // 1. Write memtable to new SST file
+        self.sst.write_memtable(&self.memtable)?;
 
         // 2. Rotate WAL (data is now in SST)
         self.wal.rotate()?;
+
+        // 3. Clear memtable
+        self.memtable.clear();
 
         Ok(())
     }

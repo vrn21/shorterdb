@@ -111,6 +111,14 @@ impl WAL {
             .write(true)
             .truncate(true)
             .open(&self.path)?;
+        file.sync_all()?;
+        drop(file);
+
+        // Reopen with append mode for future writes
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
 
         self.writer = BufWriter::new(file);
         Ok(())

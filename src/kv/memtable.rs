@@ -45,11 +45,15 @@ impl Value {
 const ENTRY_OVERHEAD: usize = 64;
 
 /// In-memory sorted write buffer.
+///
+/// Note: Size tracking is intentionally approximate. Concurrent writes may cause
+/// slight inaccuracies, but this is acceptable since the size is only used to
+/// determine when to flush (not for correctness).
 pub struct Memtable {
     /// Sorted key-value storage
     entries: SkipMap<Bytes, Value>,
 
-    /// Current approximate size in bytes
+    /// Current approximate size in bytes (may be slightly inaccurate under contention)
     size_bytes: AtomicUsize,
 
     /// Threshold to trigger flush

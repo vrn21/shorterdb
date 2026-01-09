@@ -27,9 +27,7 @@ fn test_delete() {
 fn test_non_existent_key() {
     let db = ShorterDB::new(Path::new("./test_db")).unwrap();
 
-    let value = db.get(b"non_existent_key").unwrap_err();
-    assert!(matches!(
-        value,
-        shorterdb::errors::ShortDBErrors::KeyNotFound
-    ));
+    // Non-existent keys return Ok(None), not an error
+    let value = db.get(b"non_existent_key").unwrap();
+    assert_eq!(value, None);
 }

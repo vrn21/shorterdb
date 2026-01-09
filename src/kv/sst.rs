@@ -1,175 +1,403 @@
-use std::{
-    collections::VecDeque,
-    fs::{self, create_dir, remove_file, OpenOptions},
-    io::Write,
-    path::{Path, PathBuf},
-};
+//! Sorted String Table (SST) implementation for ShorterDB.
+//!
+//! File format: Data entries | Index entries | Footer (24 bytes)
 
-use std::fs::File;
+use std::collections::BTreeMap;
+use std::fs::{self, File};
+use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 
-use anyhow::Error;
+use crate::errors::{Result, ShortDBErrors};
 
-use super::{memtable::Memtable, utils::bytes_to_string};
+use super::memtable::{Memtable, Value};
 
-pub(crate) struct SST {
-    pub(crate) dir: PathBuf,
-    pub(crate) levels: Vec<PathBuf>,
-    pub(crate) max_level_size: Vec<usize>,
-    pub(crate) curr_level_size: Vec<usize>,
-    pub(crate) queue: VecDeque<Memtable>,
-    // parralellisation: todo!(),
+/// Magic number at end of every SST file: "SSTFILE\0"
+const SST_MAGIC: u64 = 0x53_53_54_46_49_4C_45_00;
+
+/// Entry type markers
+const ENTRY_TYPE_VALUE: u8 = 0x01;
+const ENTRY_TYPE_TOMBSTONE: u8 = 0x02;
+
+/// Sparse index interval - one index entry every N data entries
+const INDEX_INTERVAL: usize = 16;
+
+/// Footer size: data_end(8) + index_offset(8) + magic(8)
+const FOOTER_SIZE: u64 = 24;
+
+/// Represents a value read from an SST file.
+#[derive(Clone, Debug)]
+pub enum SstValue {
+    Data(Vec<u8>),
+    Tombstone,
+}
+
+/// A single SST file on disk.
+pub struct SstFile {
+    path: PathBuf,
+    /// Sparse index: (key, file offset)
+    index: Vec<(Vec<u8>, u64)>,
+    /// Where the data section ends
+    data_end_offset: u64,
+}
+
+impl SstFile {
+    /// Create a new SST file from memtable entries.
+    pub fn create(path: &Path, memtable: &Memtable) -> Result<Self> {
+        let entries: Vec<_> = memtable.iter().collect();
+        Self::write_entries(path, entries.iter().map(|(k, v)| (k.as_ref(), v)))
+    }
+
+    /// Create SST file from pre-sorted entries (used by compaction).
+    pub fn create_from_entries(path: &Path, entries: &[(Vec<u8>, Value)]) -> Result<Self> {
+        Self::write_entries(path, entries.iter().map(|(k, v)| (k.as_slice(), v)))
+    }
+
+    /// Write entries to an SST file (shared implementation).
+    fn write_entries<'a>(
+        path: &Path,
+        entries: impl Iterator<Item = (&'a [u8], &'a Value)>,
+    ) -> Result<Self> {
+        let file = File::create(path)?;
+        let mut writer = BufWriter::new(file);
+
+        let mut index = Vec::new();
+        let mut count = 0usize;
+        let mut offset = 0u64;
+
+        for (key, value) in entries {
+            if count % INDEX_INTERVAL == 0 {
+                index.push((key.to_vec(), offset));
+            }
+            offset += Self::write_entry(&mut writer, key, value)? as u64;
+            count += 1;
+        }
+
+        let data_end_offset = offset;
+
+        // Write index
+        for (key, off) in &index {
+            writer.write_all(&(key.len() as u32).to_le_bytes())?;
+            writer.write_all(key)?;
+            writer.write_all(&off.to_le_bytes())?;
+        }
+
+        // Write footer
+        writer.write_all(&data_end_offset.to_le_bytes())?;
+        writer.write_all(&offset.to_le_bytes())?; // index_offset == data_end
+        writer.write_all(&SST_MAGIC.to_le_bytes())?;
+
+        writer.flush()?;
+        writer.get_ref().sync_all()?;
+
+        Ok(Self {
+            path: path.to_path_buf(),
+            index,
+            data_end_offset,
+        })
+    }
+
+    /// Write a single data entry, returns bytes written.
+    fn write_entry<W: Write>(w: &mut W, key: &[u8], value: &Value) -> Result<usize> {
+        let mut n = 0;
+
+        w.write_all(&(key.len() as u32).to_le_bytes())?;
+        n += 4;
+        w.write_all(key)?;
+        n += key.len();
+
+        match value {
+            Value::Data(data) => {
+                w.write_all(&(data.len() as u32).to_le_bytes())?;
+                n += 4;
+                w.write_all(data)?;
+                n += data.len();
+                w.write_all(&[ENTRY_TYPE_VALUE])?;
+                n += 1;
+            }
+            Value::Tombstone => {
+                w.write_all(&0u32.to_le_bytes())?;
+                n += 4;
+                w.write_all(&[ENTRY_TYPE_TOMBSTONE])?;
+                n += 1;
+            }
+        }
+        Ok(n)
+    }
+
+    /// Open an existing SST file.
+    pub fn open(path: &Path) -> Result<Self> {
+        let file = File::open(path)?;
+        let file_size = file.metadata()?.len();
+        let mut reader = BufReader::new(file);
+
+        // Read footer (last 24 bytes)
+        reader.seek(SeekFrom::End(-(FOOTER_SIZE as i64)))?;
+        let mut footer = [0u8; 24];
+        reader.read_exact(&mut footer)?;
+
+        let data_end_offset = u64::from_le_bytes(footer[0..8].try_into().unwrap());
+        let index_offset = u64::from_le_bytes(footer[8..16].try_into().unwrap());
+        let magic = u64::from_le_bytes(footer[16..24].try_into().unwrap());
+
+        if magic != SST_MAGIC {
+            return Err(ShortDBErrors::SstCorruption(format!(
+                "invalid magic: {:x}",
+                magic
+            )));
+        }
+
+        // Read index
+        reader.seek(SeekFrom::Start(index_offset))?;
+        let index_size = file_size - FOOTER_SIZE - index_offset;
+        let index = Self::read_index(&mut reader, index_size)?;
+
+        Ok(Self {
+            path: path.to_path_buf(),
+            index,
+            data_end_offset,
+        })
+    }
+
+    fn read_index(reader: &mut BufReader<File>, mut remaining: u64) -> Result<Vec<(Vec<u8>, u64)>> {
+        let mut index = Vec::new();
+
+        while remaining >= 12 {
+            // minimum: 4 (len) + 0 (key) + 8 (offset)
+            let mut len_buf = [0u8; 4];
+            reader.read_exact(&mut len_buf)?;
+            let key_len = u32::from_le_bytes(len_buf) as usize;
+            remaining -= 4;
+
+            if key_len > 1024 * 1024 || (key_len as u64) > remaining {
+                return Err(ShortDBErrors::SstCorruption("key too large".into()));
+            }
+
+            let mut key = vec![0u8; key_len];
+            reader.read_exact(&mut key)?;
+            remaining -= key_len as u64;
+
+            let mut off_buf = [0u8; 8];
+            reader.read_exact(&mut off_buf)?;
+            remaining -= 8;
+
+            index.push((key, u64::from_le_bytes(off_buf)));
+        }
+        Ok(index)
+    }
+
+    /// Get a value by key.
+    pub fn get(&self, key: &[u8]) -> Result<Option<SstValue>> {
+        let start = self.find_start_offset(key);
+
+        let file = File::open(&self.path)?;
+        let mut reader = BufReader::new(file);
+        reader.seek(SeekFrom::Start(start))?;
+
+        while reader.stream_position()? < self.data_end_offset {
+            match Self::read_entry(&mut reader)? {
+                Some((k, v)) => match k.as_slice().cmp(key) {
+                    std::cmp::Ordering::Equal => return Ok(Some(v)),
+                    std::cmp::Ordering::Greater => return Ok(None),
+                    std::cmp::Ordering::Less => continue,
+                },
+                None => return Ok(None),
+            }
+        }
+        Ok(None)
+    }
+
+    /// Find starting offset using binary search on sparse index.
+    fn find_start_offset(&self, key: &[u8]) -> u64 {
+        // Find first index entry > key, then use the one before it
+        let i = self.index.partition_point(|(k, _)| k.as_slice() <= key);
+        if i > 0 {
+            self.index[i - 1].1
+        } else {
+            0
+        }
+    }
+
+    /// Read a single entry from current position.
+    fn read_entry(reader: &mut BufReader<File>) -> Result<Option<(Vec<u8>, SstValue)>> {
+        let mut len_buf = [0u8; 4];
+        match reader.read_exact(&mut len_buf) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(e) => return Err(e.into()),
+        }
+        let key_len = u32::from_le_bytes(len_buf) as usize;
+
+        let mut key = vec![0u8; key_len];
+        reader.read_exact(&mut key)?;
+
+        reader.read_exact(&mut len_buf)?;
+        let val_len = u32::from_le_bytes(len_buf) as usize;
+
+        let mut value = vec![0u8; val_len];
+        reader.read_exact(&mut value)?;
+
+        let mut type_buf = [0u8; 1];
+        reader.read_exact(&mut type_buf)?;
+
+        let v = match type_buf[0] {
+            ENTRY_TYPE_VALUE => SstValue::Data(value),
+            ENTRY_TYPE_TOMBSTONE => SstValue::Tombstone,
+            t => return Err(ShortDBErrors::SstCorruption(format!("invalid type: {}", t))),
+        };
+
+        Ok(Some((key, v)))
+    }
+}
+
+/// Manages multiple SST files organized in levels.
+pub struct SST {
+    dir: PathBuf,
+    levels: Vec<Vec<SstFile>>,
+    next_file_id: u64,
 }
 
 impl SST {
-    pub(crate) fn open(db_name: String) -> Self {
-        let dir;
-        match create_dir("./".to_string() + &db_name) {
-            Ok(()) => {
-                dir = PathBuf::from("./".to_string() + &db_name);
-                let mut l0 = dir.clone();
-                l0.push("./l0");
-                create_dir(l0.clone());
-                let mut levels = Vec::new();
-                levels.push(l0.clone());
-                let mut max_level_size = Vec::new();
-                max_level_size.push(1024);
-                let mut curr_level_size = Vec::new();
-                curr_level_size.push(0);
-                SST {
-                    dir,
-                    levels,
-                    max_level_size,
-                    queue: VecDeque::new(),
-                    curr_level_size,
-                }
-            }
-            Err(e) => {
-                dir = PathBuf::from("./".to_string() + &db_name);
+    /// Open SST manager, loading existing files.
+    pub fn open(dir: &Path) -> Result<Self> {
+        let sst_dir = dir.join("sst");
+        fs::create_dir_all(&sst_dir)?;
 
-                let children = dir.read_dir().unwrap();
-                let mut levels = Vec::new();
-                let mut curr_level_size = Vec::new();
-                let mut max_level_size = Vec::new();
-                let mut i: usize = 0;
-                for child in children {
-                    let child = child.unwrap();
-                    let path = child.path();
-                    if path.is_dir() {
-                        let level = path.clone();
-                        levels.push(path.clone());
-                        max_level_size.push(1024 * 10_i32.pow(i as u32) as usize);
-                        let curr_no_of_kvs_in_level = path.read_dir().unwrap().count();
-                        max_level_size[i] = curr_no_of_kvs_in_level;
-                        i += 1;
-                    }
-                }
-
-                SST {
-                    dir,
-                    levels,
-                    max_level_size,
-                    curr_level_size,
-                    queue: VecDeque::new(),
-                }
-            }
-        }
+        let mut sst = Self {
+            dir: sst_dir,
+            levels: vec![Vec::new()],
+            next_file_id: 1,
+        };
+        sst.load_existing()?;
+        Ok(sst)
     }
 
-    pub(crate) fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        dbg!("looking in sst");
-        for level in self.levels.iter() {
-            dbg!(&level);
-            let ssts: fs::ReadDir = level.read_dir().unwrap();
-            for sst in ssts {
-                let mut directory = level.clone();
-                let name = bytes_to_string(key);
-                directory.push(name.clone());
-                match Path::new(&directory).try_exists() {
-                    Ok(true) => match fs::read(directory) {
-                        Ok(val) => {
-                            return Some(val);
-                        }
-                        Err(e) => {
-                            println!("some error happend{}", e);
-                        }
-                    },
-                    Ok(false) => {}
-                    Err(e) => {
-                        println!("error while seeking into sst files{}", e);
-                    }
-                }
+    fn load_existing(&mut self) -> Result<()> {
+        let entries = match fs::read_dir(&self.dir) {
+            Ok(e) => e,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
             }
-        }
-        return None;
-    }
 
-    pub(crate) fn set(&mut self) {
-        use super::memtable::Value;
-
-        let mem = self.queue.pop_front().unwrap();
-
-        for (key, value) in mem.iter() {
-            // Skip tombstones - they don't need to be written to SST as files
-            // (In a proper SST implementation, tombstones would be written to handle
-            // older versions in lower levels, but for now we skip them)
-            let value_bytes = match value {
-                Value::Data(data) => data,
-                Value::Tombstone => continue,
+            let filename = match path.file_name().and_then(|s| s.to_str()) {
+                Some(f) if f.ends_with(".sst") => f,
+                _ => continue,
             };
 
-            let mut path_of_kv_file = self.dir.clone();
-            path_of_kv_file.push("l0");
-            self.curr_level_size.push(0);
-            match path_of_kv_file.is_dir() {
-                false => {
-                    create_dir(&path_of_kv_file).expect("sorry couldnt create the folder");
-                }
-                true => {
-                    print!("folder already there");
-                }
+            // Parse "L0_0001.sst"
+            let name = filename.trim_end_matches(".sst");
+            let parts: Vec<&str> = name.split('_').collect();
+            if parts.len() != 2 {
+                continue;
             }
-            path_of_kv_file.push(bytes_to_string(&key));
-            dbg!(&path_of_kv_file);
-            let file = File::create_new(&path_of_kv_file);
-            match file {
-                Ok(mut f) => {
-                    f.write_all(&value_bytes).unwrap();
-                }
-                Err(_) => {
-                    print!("most probably already existing");
-                    let file = OpenOptions::new()
-                        .write(true)
-                        .truncate(true)
-                        .open(path_of_kv_file);
-                    file.unwrap().write_all(&value_bytes).unwrap();
-                }
-            };
 
-            self.curr_level_size[0] += 1;
-            if self.curr_level_size >= self.max_level_size {
-                self.compact();
+            let level = parts[0].trim_start_matches('L').parse::<usize>().ok();
+            let file_id = parts[1].parse::<u64>().ok();
+
+            if let (Some(level), Some(file_id)) = (level, file_id) {
+                self.next_file_id = self.next_file_id.max(file_id + 1);
+
+                while self.levels.len() <= level {
+                    self.levels.push(Vec::new());
+                }
+
+                if let Ok(sst_file) = SstFile::open(&path) {
+                    self.levels[level].push(sst_file);
+                }
             }
         }
+
+        // Sort by path (which embeds file_id)
+        for level in &mut self.levels {
+            level.sort_by(|a, b| a.path.cmp(&b.path));
+        }
+        Ok(())
     }
 
-    pub(crate) fn compact(&self) {
-        print!("ok compacted");
-        // todo!()
-    }
-
-    pub(crate) fn delete(&mut self, key: &[u8]) -> Result<(), Error> {
-        for level in self.levels.iter() {
-            dbg!(&level);
-            let ssts: fs::ReadDir = level.read_dir()?;
-            for sst in ssts {
-                let mut directory = level.clone();
-                let name = bytes_to_string(key);
-                directory.push(name.clone());
-                if Path::new(&directory).exists() {
-                    remove_file(&directory)?;
-                    return Ok(());
+    /// Get a value by key, checking all levels newest to oldest.
+    pub fn get(&self, key: &[u8]) -> Result<Option<SstValue>> {
+        for level in &self.levels {
+            for sst in level.iter().rev() {
+                if let Some(v) = sst.get(key)? {
+                    return Ok(Some(v));
                 }
             }
+        }
+        Ok(None)
+    }
+
+    /// Write memtable to a new SST file.
+    pub fn write_memtable(&mut self, memtable: &Memtable) -> Result<()> {
+        if memtable.is_empty() {
+            return Ok(());
+        }
+
+        let file_id = self.next_file_id;
+        self.next_file_id += 1;
+
+        let path = self.dir.join(format!("L0_{:04}.sst", file_id));
+        let sst_file = SstFile::create(&path, memtable)?;
+
+        if self.levels.is_empty() {
+            self.levels.push(Vec::new());
+        }
+        self.levels[0].push(sst_file);
+
+        if self.levels[0].len() > 4 {
+            self.compact_l0()?;
+        }
+        Ok(())
+    }
+
+    fn compact_l0(&mut self) -> Result<()> {
+        if self.levels.is_empty() || self.levels[0].len() < 4 {
+            return Ok(());
+        }
+
+        // Collect old paths before merging
+        let old_paths: Vec<PathBuf> = self.levels[0].iter().map(|f| f.path.clone()).collect();
+
+        // Merge keeping newest version of each key
+        let mut merged: BTreeMap<Vec<u8>, Value> = BTreeMap::new();
+        for sst in &self.levels[0] {
+            let file = File::open(&sst.path)?;
+            let mut reader = BufReader::new(file);
+
+            while reader.stream_position()? < sst.data_end_offset {
+                if let Some((k, v)) = SstFile::read_entry(&mut reader)? {
+                    let val = match v {
+                        SstValue::Data(d) => Value::Data(d.into()),
+                        SstValue::Tombstone => Value::Tombstone,
+                    };
+                    merged.insert(k, val);
+                }
+            }
+        }
+
+        // Filter tombstones
+        let entries: Vec<_> = merged
+            .into_iter()
+            .filter(|(_, v)| !v.is_tombstone())
+            .collect();
+
+        self.levels[0].clear();
+
+        if !entries.is_empty() {
+            let file_id = self.next_file_id;
+            self.next_file_id += 1;
+            let path = self.dir.join(format!("L0_{:04}.sst", file_id));
+            let new_sst = SstFile::create_from_entries(&path, &entries)?;
+            self.levels[0].push(new_sst);
+        }
+
+        // Delete old files
+        for path in old_paths {
+            let _ = fs::remove_file(path);
         }
         Ok(())
     }

@@ -25,6 +25,9 @@ pub enum ShortDBErrors {
     ValueNotSet,
     #[error("We need to flush to sst, Max size for Memtable reached")]
     FlushNeededFromMemTable,
+    /// SST file is corrupted
+    #[error("SST corruption: {0}")]
+    SstCorruption(String),
 }
 
 /// Result type for kvs.
