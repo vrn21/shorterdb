@@ -71,8 +71,12 @@ fn main() -> Result<()> {
                 };
             }
             Some(Commands::Delete { key }) => match db.delete(&key.as_bytes()) {
-                Ok(()) => {
-                    println!("Value for key: {} changed to tombstone", key);
+                Ok(existed) => {
+                    if existed {
+                        println!("Key '{}' deleted (was present)", key);
+                    } else {
+                        println!("Key '{}' marked for deletion (was not present)", key);
+                    }
                 }
                 Err(e) => {
                     println!("Some error happened {}", e);

@@ -104,11 +104,18 @@ impl SST {
     }
 
     pub(crate) fn set(&mut self) {
+        use super::memtable::Value;
+
         let mem = self.queue.pop_front().unwrap();
 
-        for entry in mem.memtable.iter() {
-            let key = entry.key();
-            let value = entry.value();
+        for (key, value) in mem.iter() {
+            // Skip tombstones - they don't need to be written to SST as files
+            // (In a proper SST implementation, tombstones would be written to handle
+            // older versions in lower levels, but for now we skip them)
+            let value_bytes = match value {
+                Value::Data(data) => data,
+                Value::Tombstone => continue,
+            };
 
             let mut path_of_kv_file = self.dir.clone();
             path_of_kv_file.push("l0");
@@ -121,20 +128,20 @@ impl SST {
                     print!("folder already there");
                 }
             }
-            path_of_kv_file.push(bytes_to_string(key));
+            path_of_kv_file.push(bytes_to_string(&key));
             dbg!(&path_of_kv_file);
-            let mut file = File::create_new(&path_of_kv_file);
+            let file = File::create_new(&path_of_kv_file);
             match file {
-                Ok(_) => {
-                    file.unwrap().write_all(value).unwrap();
+                Ok(mut f) => {
+                    f.write_all(&value_bytes).unwrap();
                 }
                 Err(_) => {
                     print!("most probably already existing");
-                    let mut file = OpenOptions::new()
+                    let file = OpenOptions::new()
                         .write(true)
                         .truncate(true)
                         .open(path_of_kv_file);
-                    file.unwrap().write_all(value);
+                    file.unwrap().write_all(&value_bytes).unwrap();
                 }
             };
 

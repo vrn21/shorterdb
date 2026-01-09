@@ -17,6 +17,9 @@ pub enum ShortDBErrors {
     /// It indicates a corrupted log or a program bug.
     #[error("Unexpected command type")]
     UnexpectedCommandType,
+    /// WAL file is corrupted (partial write detected)
+    #[error("WAL corruption detected")]
+    WalCorruption,
     //value is not set, it is given when we try get after set
     #[error("Value not set")]
     ValueNotSet,
