@@ -4,7 +4,7 @@ A high-performance, embedded key-value store for Rust, built with a Log-Structur
 
 [![Crates.io](https://img.shields.io/crates/v/shorterdb.svg)](https://crates.io/crates/shorterdb)
 [![Documentation](https://docs.rs/shorterdb/badge.svg)](https://docs.rs/shorterdb)
-[![License](https://img.shields.io/crates/l/shorterdb.svg)](../../LICENSE)
+[![License](https://img.shields.io/crates/l/shorterdb.svg)](https://github.com/Hrefto/shorterdb/blob/main/LICENSE)
 
 ## Features
 
@@ -68,4 +68,4 @@ cargo run -p examples --bin repl
 
 ## License
 
-Licensed under either of [Apache License, Version 2.0](../../LICENSE-APACHE) or [MIT license](../../LICENSE-MIT) at your option.
+Licensed under either of [Apache License, Version 2.0](https://github.com/Hrefto/shorterdb/blob/main/LICENSE) or [MIT license](https://github.com/Hrefto/shorterdb/blob/main/LICENSE) at your option.
