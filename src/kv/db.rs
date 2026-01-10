@@ -1,11 +1,14 @@
+use std::fs;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+
 use super::{
+    flusher::Flusher,
     memtable::{Memtable, Value},
     sst::{SstValue, SST},
     wal::{WalEntry, WalOp, WAL},
 };
 use crate::errors::Result;
-use std::fs;
-use std::path::Path;
 
 /// Default memtable size threshold (4MB)
 const DEFAULT_MEMTABLE_SIZE: usize = 4 * 1024 * 1024;
@@ -15,11 +18,14 @@ pub struct ShorterDB {
     /// In-memory write buffer
     memtable: Memtable,
 
-    /// Write-ahead log for durability
-    wal: WAL,
+    /// Write-ahead log for durability (shared with flusher)
+    wal: Arc<Mutex<WAL>>,
 
-    /// Sorted String Tables (on-disk storage)
-    sst: SST,
+    /// Sorted String Tables on-disk storage (shared with flusher)
+    sst: Arc<Mutex<SST>>,
+
+    /// Background flusher
+    flusher: Flusher,
 }
 
 impl ShorterDB {
@@ -37,43 +43,71 @@ impl ShorterDB {
         // Create directory if needed
         fs::create_dir_all(data_dir)?;
 
+        // Minimum 1KB to prevent pathological flush behavior
+        let memtable_size = memtable_size.max(1024);
+
         // Open WAL
-        let wal = WAL::open(data_dir)?;
+        let wal = Arc::new(Mutex::new(WAL::open(data_dir)?));
 
         // Open SST
-        let sst = SST::open(data_dir)?;
+        let sst = Arc::new(Mutex::new(SST::open(data_dir)?));
 
-        // Create memtable with size limit (minimum 1KB to prevent pathological flush behavior)
-        let memtable = Memtable::new(memtable_size.max(1024));
+        // Create memtable
+        let memtable = Memtable::new(memtable_size);
+
+        // Create flusher with shared access to SST and WAL
+        let flusher = Flusher::new(Arc::clone(&sst), Arc::clone(&wal));
 
         // Recover from WAL (entries since last flush)
-        for entry in wal.read_entries()? {
-            match entry.op {
-                WalOp::Set => memtable.set(&entry.key, &entry.value),
-                WalOp::Delete => memtable.delete(&entry.key),
+        {
+            let wal_guard = wal.lock().unwrap_or_else(|e| e.into_inner());
+            for entry in wal_guard.read_entries()? {
+                match entry.op {
+                    WalOp::Set => memtable.set(&entry.key, &entry.value),
+                    WalOp::Delete => memtable.delete(&entry.key),
+                }
             }
         }
 
-        Ok(Self { memtable, wal, sst })
+        Ok(Self {
+            memtable,
+            wal,
+            sst,
+            flusher,
+        })
     }
 
     /// Get a value by key.
     pub fn get(&self, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>> {
         let key = key.as_ref();
 
-        // 1. Check memtable first (newest data)
+        // 1. Check active memtable first (newest data)
         if let Some(value) = self.memtable.get(key) {
-            return match value {
-                Value::Data(bytes) => Ok(Some(bytes.to_vec())),
-                Value::Tombstone => Ok(None),
-            };
+            return self.handle_value(value);
         }
 
-        // 2. Check SST (older data)
-        match self.sst.get(key)? {
+        // 2. Check immutable memtable (being flushed)
+        if let Some(imm) = self.flusher.get_immutable() {
+            if let Some(value) = imm.get(key) {
+                return self.handle_value(value);
+            }
+        }
+
+        // 3. Check SST (older data)
+        let sst_guard = self.sst.lock().unwrap_or_else(|e| e.into_inner());
+        match sst_guard.get(key)? {
             Some(SstValue::Data(bytes)) => Ok(Some(bytes)),
             Some(SstValue::Tombstone) => Ok(None),
             None => Ok(None),
+        }
+    }
+
+    /// Convert memtable Value to Option<Vec<u8>>.
+    #[inline]
+    fn handle_value(&self, value: Value) -> Result<Option<Vec<u8>>> {
+        match value {
+            Value::Data(bytes) => Ok(Some(bytes.to_vec())),
+            Value::Tombstone => Ok(None),
         }
     }
 
@@ -83,15 +117,16 @@ impl ShorterDB {
         let value = value.as_ref();
 
         // 1. Write to WAL first (durability)
-        self.wal.write(&WalEntry::set(key, value))?;
+        {
+            let mut wal_guard = self.wal.lock().unwrap_or_else(|e| e.into_inner());
+            wal_guard.write(&WalEntry::set(key, value))?;
+        }
 
         // 2. Write to memtable
         self.memtable.set(key, value);
 
-        // 3. Flush if needed
-        if self.memtable.needs_flush() {
-            self.flush_memtable()?;
-        }
+        // 3. Trigger flush if needed
+        self.maybe_flush();
 
         Ok(())
     }
@@ -106,46 +141,52 @@ impl ShorterDB {
         let existed = self.get(key)?.is_some();
 
         // 1. Write tombstone to WAL
-        self.wal.write(&WalEntry::delete(key))?;
+        {
+            let mut wal_guard = self.wal.lock().unwrap_or_else(|e| e.into_inner());
+            wal_guard.write(&WalEntry::delete(key))?;
+        }
 
         // 2. Write tombstone to memtable
         self.memtable.delete(key);
 
-        // 3. Flush if needed
-        if self.memtable.needs_flush() {
-            self.flush_memtable()?;
-        }
+        // 3. Trigger flush if needed
+        self.maybe_flush();
 
         Ok(existed)
     }
 
-    /// Gracefully close the database.
-    pub fn close(&mut self) -> Result<()> {
-        // Flush if there's data in memtable
-        if !self.memtable.is_empty() {
-            self.flush_memtable()?;
+    /// Check if flush is needed and schedule it.
+    fn maybe_flush(&mut self) {
+        if self.memtable.needs_flush() {
+            let max_size = self.memtable.max_size();
+            // Swap memtable with a new empty one
+            let old = std::mem::replace(&mut self.memtable, Memtable::new(max_size));
+
+            // Schedule background flush (non-blocking unless stalled)
+            self.flusher.schedule(old);
         }
-
-        // Sync WAL
-        self.wal.sync()?;
-
-        Ok(())
     }
 
-    /// Flush memtable to SST.
-    fn flush_memtable(&mut self) -> Result<()> {
-        if self.memtable.is_empty() {
-            return Ok(());
+    /// Gracefully close the database.
+    pub fn close(&mut self) -> Result<()> {
+        // Flush remaining data in memtable
+        if !self.memtable.is_empty() {
+            let max_size = self.memtable.max_size();
+            let old = std::mem::replace(&mut self.memtable, Memtable::new(max_size));
+            self.flusher.schedule(old);
         }
 
-        // 1. Write memtable to new SST file
-        self.sst.write_memtable(&self.memtable)?;
+        // Wait for all flushes to complete
+        self.flusher.wait_for_completion();
 
-        // 2. Rotate WAL (data is now in SST)
-        self.wal.rotate()?;
+        // Shutdown flusher
+        self.flusher.shutdown();
 
-        // 3. Clear memtable
-        self.memtable.clear();
+        // Sync WAL
+        {
+            let mut wal_guard = self.wal.lock().unwrap_or_else(|e| e.into_inner());
+            wal_guard.sync()?;
+        }
 
         Ok(())
     }
