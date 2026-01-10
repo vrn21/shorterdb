@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-shorterdb.workspace = true
+shorterDB.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 

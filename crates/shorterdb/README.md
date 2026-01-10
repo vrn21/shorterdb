@@ -20,7 +20,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-shorterdb = "0.2.0"
+shorterDB = "0.2.0"
 ```
 
 ## Quick Start

@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Core engine
-shorterdb.workspace = true
+shorterDB.workspace = true
 
 # Networking
 tokio.workspace = true

@@ -1,5 +1,5 @@
 [package]
-name = "shorterdb"
+name = "shorterDB"
 description = "A lightweight embedded key-value store built with SkipLists and LSM architecture"
 version.workspace = true
 authors.workspace = true
