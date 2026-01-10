@@ -32,4 +32,4 @@ prost = "0.12"
 tower-http = { version = "0.3", features = ["cors"] }
 
 # Local crate references
-shorterdb = { path = "crates/shorterdb" }
+shorterdb = { path = "crates/shorterdb", version = "0.2.0" }
