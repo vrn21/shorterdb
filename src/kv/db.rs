@@ -2,6 +2,8 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use log::{debug, info, warn};
+
 use super::{
     flusher::Flusher,
     memtable::{Memtable, Value},
@@ -39,12 +41,14 @@ impl ShorterDB {
     /// When the memtable exceeds this size, it will be flushed to disk.
     pub fn with_memtable_size<P: AsRef<Path>>(data_dir: P, memtable_size: usize) -> Result<Self> {
         let data_dir = data_dir.as_ref();
+        info!("Opening database at {:?}", data_dir);
 
         // Create directory if needed
         fs::create_dir_all(data_dir)?;
 
         // Minimum 1KB to prevent pathological flush behavior
         let memtable_size = memtable_size.max(1024);
+        debug!("Memtable size threshold: {} bytes", memtable_size);
 
         // Open WAL
         let wal = Arc::new(Mutex::new(WAL::open(data_dir)?));
@@ -59,15 +63,24 @@ impl ShorterDB {
         let flusher = Flusher::new(Arc::clone(&sst), Arc::clone(&wal));
 
         // Recover from WAL (entries since last flush)
-        {
+        let recovered_count = {
             let wal_guard = wal.lock().unwrap_or_else(|e| e.into_inner());
-            for entry in wal_guard.read_entries()? {
+            let entries = wal_guard.read_entries()?;
+            let count = entries.len();
+            for entry in entries {
                 match entry.op {
                     WalOp::Set => memtable.set(&entry.key, &entry.value),
                     WalOp::Delete => memtable.delete(&entry.key),
                 }
             }
+            count
+        };
+
+        if recovered_count > 0 {
+            info!("Recovered {} entries from WAL", recovered_count);
         }
+
+        info!("Database opened successfully");
 
         Ok(Self {
             memtable,
@@ -159,6 +172,8 @@ impl ShorterDB {
     fn maybe_flush(&mut self) {
         if self.memtable.needs_flush() {
             let max_size = self.memtable.max_size();
+            debug!("Memtable full, scheduling flush");
+
             // Swap memtable with a new empty one
             let old = std::mem::replace(&mut self.memtable, Memtable::new(max_size));
 
@@ -169,6 +184,8 @@ impl ShorterDB {
 
     /// Gracefully close the database.
     pub fn close(&mut self) -> Result<()> {
+        info!("Closing database");
+
         // Flush remaining data in memtable
         if !self.memtable.is_empty() {
             let max_size = self.memtable.max_size();
@@ -188,6 +205,7 @@ impl ShorterDB {
             wal_guard.sync()?;
         }
 
+        info!("Database closed");
         Ok(())
     }
 }
@@ -196,6 +214,8 @@ impl ShorterDB {
 impl Drop for ShorterDB {
     fn drop(&mut self) {
         // Best-effort close (can't propagate errors from Drop)
-        let _ = self.close();
+        if let Err(e) = self.close() {
+            warn!("Error during database close: {}", e);
+        }
     }
 }

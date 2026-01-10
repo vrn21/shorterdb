@@ -21,15 +21,6 @@ impl Value {
         matches!(self, Value::Tombstone)
     }
 
-    /// Get the data if present.
-    #[inline]
-    pub fn data(&self) -> Option<&Bytes> {
-        match self {
-            Value::Data(b) => Some(b),
-            Value::Tombstone => None,
-        }
-    }
-
     /// Size in bytes (for memory tracking).
     #[inline]
     pub fn size(&self) -> usize {
@@ -143,12 +134,6 @@ impl Memtable {
         self.entries.is_empty()
     }
 
-    /// Get current size in bytes.
-    #[inline]
-    pub fn size(&self) -> usize {
-        self.size_bytes.load(Ordering::Relaxed)
-    }
-
     /// Get the max size threshold.
     #[inline]
     pub fn max_size(&self) -> usize {
@@ -160,11 +145,5 @@ impl Memtable {
         self.entries
             .iter()
             .map(|e| (e.key().clone(), e.value().clone()))
-    }
-
-    /// Clear all entries (after successful flush).
-    pub fn clear(&self) {
-        self.entries.clear();
-        self.size_bytes.store(0, Ordering::Relaxed);
     }
 }

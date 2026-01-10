@@ -7,6 +7,8 @@ use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+use log::{debug, info, warn};
+
 use crate::errors::{Result, ShortDBErrors};
 
 use super::memtable::{Memtable, Value};
@@ -44,11 +46,21 @@ impl SstFile {
     /// Create a new SST file from memtable entries.
     pub fn create(path: &Path, memtable: &Memtable) -> Result<Self> {
         let entries: Vec<_> = memtable.iter().collect();
+        debug!(
+            "Creating SST file {:?} with {} entries",
+            path,
+            entries.len()
+        );
         Self::write_entries(path, entries.iter().map(|(k, v)| (k.as_ref(), v)))
     }
 
     /// Create SST file from pre-sorted entries (used by compaction).
     pub fn create_from_entries(path: &Path, entries: &[(Vec<u8>, Value)]) -> Result<Self> {
+        debug!(
+            "Creating SST file {:?} from {} compacted entries",
+            path,
+            entries.len()
+        );
         Self::write_entries(path, entries.iter().map(|(k, v)| (k.as_slice(), v)))
     }
 
@@ -88,6 +100,13 @@ impl SstFile {
 
         writer.flush()?;
         writer.get_ref().sync_all()?;
+
+        debug!(
+            "SST file {:?} written: {} entries, {} index entries",
+            path,
+            count,
+            index.len()
+        );
 
         Ok(Self {
             path: path.to_path_buf(),
@@ -150,6 +169,8 @@ impl SstFile {
         reader.seek(SeekFrom::Start(index_offset))?;
         let index_size = file_size - FOOTER_SIZE - index_offset;
         let index = Self::read_index(&mut reader, index_size)?;
+
+        debug!("Opened SST file {:?}: {} index entries", path, index.len());
 
         Ok(Self {
             path: path.to_path_buf(),
@@ -268,6 +289,12 @@ impl SST {
             next_file_id: 1,
         };
         sst.load_existing()?;
+
+        info!(
+            "SST manager opened: {} L0 files",
+            sst.levels.get(0).map(|l| l.len()).unwrap_or(0)
+        );
+
         Ok(sst)
     }
 
@@ -306,8 +333,9 @@ impl SST {
                     self.levels.push(Vec::new());
                 }
 
-                if let Ok(sst_file) = SstFile::open(&path) {
-                    self.levels[level].push(sst_file);
+                match SstFile::open(&path) {
+                    Ok(sst_file) => self.levels[level].push(sst_file),
+                    Err(e) => warn!("Failed to open SST file {:?}: {}", path, e),
                 }
             }
         }
@@ -359,6 +387,8 @@ impl SST {
             return Ok(());
         }
 
+        info!("Starting L0 compaction: {} files", self.levels[0].len());
+
         // Collect old paths before merging
         let old_paths: Vec<PathBuf> = self.levels[0].iter().map(|f| f.path.clone()).collect();
 
@@ -396,9 +426,18 @@ impl SST {
         }
 
         // Delete old files
-        for path in old_paths {
-            let _ = fs::remove_file(path);
+        for path in &old_paths {
+            if let Err(e) = fs::remove_file(path) {
+                warn!("Failed to delete old SST file {:?}: {}", path, e);
+            }
         }
+
+        info!(
+            "L0 compaction complete: {} files -> 1 file, {} entries",
+            old_paths.len(),
+            entries.len()
+        );
+
         Ok(())
     }
 }

@@ -19,6 +19,7 @@ anyhow = "1.0.86"
 bytes = "1.7.1"
 clap = { version = "4.0", features = ["derive"] }
 crossbeam-skiplist = "0.1.3"
+log = "0.4"
 thiserror = "1.0.63"
 tonic = "0.11"
 tonic-web = "0.11"

@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
+use log::{debug, error, info, warn};
+
 use super::memtable::Memtable;
 use super::sst::SST;
 use super::wal::WAL;
@@ -44,7 +46,9 @@ impl Flusher {
             let shutdown = Arc::clone(&shutdown);
 
             thread::spawn(move || {
+                debug!("Flush thread started");
                 flush_loop(immutable, signal, shutdown, sst, wal);
+                debug!("Flush thread exited");
             })
         };
 
@@ -64,15 +68,20 @@ impl Flusher {
         let mut guard = self.immutable.lock().unwrap_or_else(|e| e.into_inner());
 
         // Wait if previous flush not done (write stall)
+        if guard.is_some() {
+            warn!("Write stall: waiting for previous flush to complete");
+        }
         while guard.is_some() && !self.shutdown.load(Ordering::SeqCst) {
             guard = self.signal.wait(guard).unwrap_or_else(|e| e.into_inner());
         }
 
         // Don't schedule if we're shutting down
         if self.shutdown.load(Ordering::SeqCst) {
+            debug!("Flusher shutting down, skipping schedule");
             return;
         }
 
+        debug!("Scheduling memtable for flush");
         *guard = Some(Arc::new(memtable));
         self.signal.notify_all();
     }
@@ -96,6 +105,8 @@ impl Flusher {
 
     /// Shutdown the background thread gracefully.
     pub fn shutdown(&mut self) {
+        info!("Shutting down flush thread");
+
         // Signal shutdown
         self.shutdown.store(true, Ordering::SeqCst);
         self.signal.notify_all();
@@ -141,6 +152,8 @@ fn flush_loop(
         };
 
         if let Some(mem) = mem {
+            info!("Starting flush to SST");
+
             // Perform I/O work (outside lock)
             let flush_result = {
                 let mut sst_guard = sst.lock().unwrap_or_else(|e| e.into_inner());
@@ -149,11 +162,13 @@ fn flush_loop(
 
             match flush_result {
                 Ok(()) => {
+                    info!("Flush to SST completed successfully");
+
                     // Rotate WAL after successful SST write
                     {
                         let mut wal_guard = wal.lock().unwrap_or_else(|e| e.into_inner());
                         if let Err(e) = wal_guard.rotate() {
-                            eprintln!("WAL rotate failed: {e}");
+                            error!("WAL rotate failed: {}", e);
                             // Continue anyway - SST write succeeded, WAL will be cleared on next flush
                         }
                     }
@@ -168,7 +183,7 @@ fn flush_loop(
                     signal.notify_all();
                 }
                 Err(e) => {
-                    eprintln!("Flush failed: {e}");
+                    error!("Flush failed: {}", e);
                     // Leave memtable in place for retry
                     // Sleep briefly before retry to avoid spin
                     thread::sleep(std::time::Duration::from_millis(100));

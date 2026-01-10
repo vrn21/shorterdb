@@ -1,7 +1,10 @@
-use crate::errors::{Result, ShortDBErrors};
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
+
+use log::debug;
+
+use crate::errors::{Result, ShortDBErrors};
 
 /// WAL operation type
 #[repr(u8)]
@@ -59,6 +62,7 @@ impl WAL {
     /// Open or create WAL file.
     pub fn open<P: AsRef<Path>>(dir: P) -> Result<Self> {
         let path = dir.as_ref().join("wal.log");
+        debug!("Opening WAL at {:?}", path);
 
         let file = OpenOptions::new()
             .create(true)
@@ -79,17 +83,6 @@ impl WAL {
         Ok(())
     }
 
-    /// Write multiple entries atomically (group commit).
-    ///
-    /// Only performs a single sync for all entries, improving throughput.
-    pub fn write_batch(&mut self, entries: &[WalEntry]) -> Result<()> {
-        for entry in entries {
-            self.write_entry_no_sync(entry)?;
-        }
-        self.sync()?;
-        Ok(())
-    }
-
     /// Sync WAL to disk.
     pub fn sync(&mut self) -> Result<()> {
         self.writer.flush()?;
@@ -102,6 +95,8 @@ impl WAL {
     /// This truncates the file to zero. Only call this after the memtable
     /// has been successfully flushed to SST.
     pub fn rotate(&mut self) -> Result<()> {
+        debug!("Rotating WAL");
+
         // Ensure current data is synced before truncating
         self.writer.flush()?;
         self.writer.get_ref().sync_all()?;
@@ -145,6 +140,7 @@ impl WAL {
             }
         }
 
+        debug!("Read {} entries from WAL", entries.len());
         Ok(entries)
     }
 
