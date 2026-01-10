@@ -1,0 +1,30 @@
+[package]
+name = "shorterdb-grpc"
+description = "gRPC server for ShorterDB"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "shorterdb-grpc"
+path = "src/main.rs"
+
+[dependencies]
+# Core engine
+shorterdb.workspace = true
+
+# Networking
+tokio.workspace = true
+tonic.workspace = true
+tonic-web.workspace = true
+prost.workspace = true
+tower-http.workspace = true
+
+# Utilities
+anyhow.workspace = true
+log.workspace = true
+
+[build-dependencies]
+tonic-build = "0.11"

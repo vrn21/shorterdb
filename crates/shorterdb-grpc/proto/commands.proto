@@ -5,6 +5,7 @@ package commands;
 service Basic{
     rpc Get (GetRequest) returns (GetResponse);
     rpc Set (SetRequest) returns (SetResponse);
+    rpc Delete (DelRequest) returns (DelResponse);
 }
 
 message GetRequest{
@@ -26,4 +27,8 @@ message SetResponse{
 
 message DelRequest{
     string key = 1;
+}
+
+message DelResponse{
+    bool key_existed = 1;
 }

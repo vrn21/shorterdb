@@ -53,12 +53,12 @@ impl WalEntry {
 }
 
 /// Write-Ahead Log for durability
-pub struct WAL {
+pub struct Wal {
     path: PathBuf,
     writer: BufWriter<File>,
 }
 
-impl WAL {
+impl Wal {
     /// Open or create WAL file.
     pub fn open<P: AsRef<Path>>(dir: P) -> Result<Self> {
         let path = dir.as_ref().join("wal.log");

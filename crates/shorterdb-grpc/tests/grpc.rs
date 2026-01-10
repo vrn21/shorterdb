@@ -1,12 +1,26 @@
+//! gRPC integration tests
+//!
+//! These tests require a running gRPC server. Start the server with:
+//! `cargo run -p shorterdb-grpc`
+//!
+//! Then run these tests with:
+//! `cargo test -p shorterdb-grpc --test grpc -- --ignored`
+
 use std::fs;
 use tonic::Request;
 
-// Include the generated gRPC code
-tonic::include_proto!("commands");
+// Include the generated gRPC code from the crate's build
+mod proto {
+    tonic::include_proto!("commands");
+}
+
+use proto::basic_client::BasicClient;
+use proto::{GetRequest, SetRequest};
 
 #[tokio::test]
+#[ignore = "requires running gRPC server"]
 async fn test_grpc_set_and_get() {
-    let mut client = basic_client::BasicClient::connect("http://[::1]:50051")
+    let mut client = BasicClient::connect("http://[::1]:50051")
         .await
         .expect("Failed to connect to gRPC server");
 
@@ -31,8 +45,9 @@ async fn test_grpc_set_and_get() {
 }
 
 #[tokio::test]
+#[ignore = "requires running gRPC server"]
 async fn test_grpc_get_non_existent_key() {
-    let mut client = basic_client::BasicClient::connect("http://[::1]:50051")
+    let mut client = BasicClient::connect("http://[::1]:50051")
         .await
         .expect("Failed to connect to gRPC server");
 
@@ -45,8 +60,9 @@ async fn test_grpc_get_non_existent_key() {
 }
 
 #[tokio::test]
+#[ignore = "requires running gRPC server"]
 async fn test_grpc_set_empty_value() {
-    let mut client = basic_client::BasicClient::connect("http://[::1]:50051")
+    let mut client = BasicClient::connect("http://[::1]:50051")
         .await
         .expect("Failed to connect to gRPC server");
 
@@ -69,45 +85,6 @@ async fn test_grpc_set_empty_value() {
         .expect("Failed to get value for key with empty value");
     assert_eq!(get_response.into_inner().value, "");
 }
-
-// #[tokio::test]
-// async fn test_grpc_concurrent_requests() {
-//     let client = basic_client::BasicClient::connect("http://[::1]:50051")
-//         .await
-//         .expect("Failed to connect to gRPC server");
-//     let client = std::sync::Arc::new(client);
-
-//     let mut handles = vec![];
-
-//     for i in 0..10 {
-//         let client = client.clone();
-//         let handle = tokio::task::spawn(async move {
-//             let key = format!("key{}", i);
-//             let value = format!("value{}", i);
-
-//             let set_request = SetRequest {
-//                 key: key.clone(),
-//                 value: value.clone(),
-//             };
-//             client
-//                 .set(Request::new(set_request))
-//                 .await
-//                 .expect("Failed to set key-value pair");
-
-//             let get_request = GetRequest { key };
-//             let get_response = client
-//                 .get(Request::new(get_request))
-//                 .await
-//                 .expect("Failed to get value for key");
-//             assert_eq!(get_response.into_inner().value, value);
-//         });
-//         handles.push(handle);
-//     }
-
-//     for handle in handles {
-//         handle.await.unwrap();
-//     }
-// }
 
 #[tokio::test]
 async fn test_cleanup() {

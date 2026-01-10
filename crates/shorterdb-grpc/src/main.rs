@@ -1,33 +1,34 @@
 //! gRPC Server for ShorterDB
 //!
-//! Run this file using:
+//! Run this binary using:
 //! ```bash
-//! cargo run --bin server
+//! cargo run -p shorterdb-grpc
 //! ```
 
-use proto::basic_server::{Basic, BasicServer};
-use proto::{GetRequest, GetResponse, SetRequest, SetResponse};
+use anyhow::Result;
+use shorterdb::ShorterDB;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tonic::transport::Server;
 
-use shorterdb::kv::db::ShorterDB;
-
 mod proto {
     tonic::include_proto!("commands");
 }
 
-struct DbOperations {
+use proto::basic_server::{Basic, BasicServer};
+use proto::{DelRequest, DelResponse, GetRequest, GetResponse, SetRequest, SetResponse};
+
+struct DbService {
     db: Arc<Mutex<ShorterDB>>,
 }
 
 #[tonic::async_trait]
-impl Basic for DbOperations {
+impl Basic for DbService {
     async fn get(
         &self,
         request: tonic::Request<GetRequest>,
-    ) -> Result<tonic::Response<GetResponse>, tonic::Status> {
+    ) -> std::result::Result<tonic::Response<GetResponse>, tonic::Status> {
         let key = request.get_ref().key.clone();
 
         let db = self.db.lock().await;
@@ -49,7 +50,7 @@ impl Basic for DbOperations {
     async fn set(
         &self,
         request: tonic::Request<SetRequest>,
-    ) -> Result<tonic::Response<SetResponse>, tonic::Status> {
+    ) -> std::result::Result<tonic::Response<SetResponse>, tonic::Status> {
         let key = request.get_ref().key.clone();
         let value = request.get_ref().value.clone();
 
@@ -62,19 +63,36 @@ impl Basic for DbOperations {
             Err(_) => Err(tonic::Status::internal("Error writing to the database")),
         }
     }
+
+    async fn delete(
+        &self,
+        request: tonic::Request<DelRequest>,
+    ) -> std::result::Result<tonic::Response<DelResponse>, tonic::Status> {
+        let key = request.get_ref().key.clone();
+
+        let mut db = self.db.lock().await;
+        match db.delete(key.as_bytes()) {
+            Ok(existed) => {
+                let response = DelResponse {
+                    key_existed: existed,
+                };
+                Ok(tonic::Response::new(response))
+            }
+            Err(_) => Err(tonic::Status::internal("Error deleting from the database")),
+        }
+    }
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     let addr = "[::1]:50051".parse()?;
+    let db = Arc::new(Mutex::new(ShorterDB::new(Path::new("./data"))?));
 
-    let db = Arc::new(Mutex::new(ShorterDB::new(Path::new("./test_db"))?));
-
-    let db_operations = DbOperations { db };
+    println!("ShorterDB gRPC server listening on {}", addr);
 
     Server::builder()
         .layer(tower_http::cors::CorsLayer::permissive())
-        .add_service(BasicServer::new(db_operations))
+        .add_service(BasicServer::new(DbService { db }))
         .serve(addr)
         .await?;
 

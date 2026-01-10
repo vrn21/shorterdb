@@ -1,0 +1,24 @@
+[package]
+name = "shorterdb"
+description = "A lightweight embedded key-value store built with SkipLists and LSM architecture"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "shorterdb"
+path = "src/lib.rs"
+
+[dependencies]
+bytes.workspace = true
+crossbeam-skiplist.workspace = true
+thiserror.workspace = true
+log.workspace = true
+
+# Examples are automatically discovered in the `examples/` directory.
+
+[dev-dependencies]
+anyhow = "1.0"
+clap = { version = "4.0", features = ["derive"] }

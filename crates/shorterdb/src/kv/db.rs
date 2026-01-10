@@ -7,24 +7,57 @@ use log::{debug, info, warn};
 use super::{
     flusher::Flusher,
     memtable::{Memtable, Value},
-    sst::{SstValue, SST},
-    wal::{WalEntry, WalOp, WAL},
+    sst::{Sst, SstValue},
+    wal::{Wal, WalEntry, WalOp},
 };
 use crate::errors::Result;
 
 /// Default memtable size threshold (4MB)
 const DEFAULT_MEMTABLE_SIZE: usize = 4 * 1024 * 1024;
 
-/// The main database handle.
+/// The main database handle for ShorterDB.
+///
+/// `ShorterDB` provides an embedded key-value store with the following features:
+/// - **LSM-Tree Architecture**: fast in-memory writes (memtable) flushed to disk (SST).
+/// - **Durability**: Write-Ahead Log (WAL) ensures no data loss on crash.
+/// - **Thread Safety**: Safe for concurrent use (though current API requires `&mut self` for writes).
+///
+/// # Architecture
+///
+/// ```text
+/// Write -> WAL -> Memtable -> (Flush) -> SST Files
+/// Read  -> Memtable -> Immutable Memtable -> SST Files
+/// ```
+///
+/// # Example
+///
+/// ```no_run
+/// use shorterdb::ShorterDB;
+/// use std::path::Path;
+///
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let mut db = ShorterDB::new("/tmp/mydb")?;
+///
+///     // Write data
+///     db.set("key", "value")?;
+///
+///     // Read data
+///     if let Some(val) = db.get("key")? {
+///         println!("Value: {:?}", val);
+///     }
+///
+///     Ok(())
+/// }
+/// ```
 pub struct ShorterDB {
     /// In-memory write buffer
     memtable: Memtable,
 
     /// Write-ahead log for durability (shared with flusher)
-    wal: Arc<Mutex<WAL>>,
+    wal: Arc<Mutex<Wal>>,
 
     /// Sorted String Tables on-disk storage (shared with flusher)
-    sst: Arc<Mutex<SST>>,
+    sst: Arc<Mutex<Sst>>,
 
     /// Background flusher
     flusher: Flusher,
@@ -51,10 +84,10 @@ impl ShorterDB {
         debug!("Memtable size threshold: {} bytes", memtable_size);
 
         // Open WAL
-        let wal = Arc::new(Mutex::new(WAL::open(data_dir)?));
+        let wal = Arc::new(Mutex::new(Wal::open(data_dir)?));
 
         // Open SST
-        let sst = Arc::new(Mutex::new(SST::open(data_dir)?));
+        let sst = Arc::new(Mutex::new(Sst::open(data_dir)?));
 
         // Create memtable
         let memtable = Memtable::new(memtable_size);

@@ -77,7 +77,7 @@ impl SstFile {
         let mut offset = 0u64;
 
         for (key, value) in entries {
-            if count % INDEX_INTERVAL == 0 {
+            if count.is_multiple_of(INDEX_INTERVAL) {
                 index.push((key.to_vec(), offset));
             }
             offset += Self::write_entry(&mut writer, key, value)? as u64;
@@ -271,13 +271,13 @@ impl SstFile {
 }
 
 /// Manages multiple SST files organized in levels.
-pub struct SST {
+pub struct Sst {
     dir: PathBuf,
     levels: Vec<Vec<SstFile>>,
     next_file_id: u64,
 }
 
-impl SST {
+impl Sst {
     /// Open SST manager, loading existing files.
     pub fn open(dir: &Path) -> Result<Self> {
         let sst_dir = dir.join("sst");
@@ -292,7 +292,7 @@ impl SST {
 
         info!(
             "SST manager opened: {} L0 files",
-            sst.levels.get(0).map(|l| l.len()).unwrap_or(0)
+            sst.levels.first().map(|l| l.len()).unwrap_or(0)
         );
 
         Ok(sst)

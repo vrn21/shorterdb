@@ -9,8 +9,8 @@ use std::thread::{self, JoinHandle};
 use log::{debug, error, info, warn};
 
 use super::memtable::Memtable;
-use super::sst::SST;
-use super::wal::WAL;
+use super::sst::Sst;
+use super::wal::Wal;
 
 /// Manages background flushing of memtables to SST files.
 ///
@@ -35,7 +35,7 @@ impl Flusher {
     /// Create a new flusher with a background thread.
     ///
     /// The flusher takes ownership of SST and WAL via Arc<Mutex<>> for thread-safe access.
-    pub fn new(sst: Arc<Mutex<SST>>, wal: Arc<Mutex<WAL>>) -> Self {
+    pub fn new(sst: Arc<Mutex<Sst>>, wal: Arc<Mutex<Wal>>) -> Self {
         let immutable = Arc::new(Mutex::new(None));
         let signal = Arc::new(Condvar::new());
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -130,8 +130,8 @@ fn flush_loop(
     immutable: Arc<Mutex<Option<Arc<Memtable>>>>,
     signal: Arc<Condvar>,
     shutdown: Arc<AtomicBool>,
-    sst: Arc<Mutex<SST>>,
-    wal: Arc<Mutex<WAL>>,
+    sst: Arc<Mutex<Sst>>,
+    wal: Arc<Mutex<Wal>>,
 ) {
     loop {
         let mem = {

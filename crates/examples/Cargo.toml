@@ -1,0 +1,18 @@
+[package]
+name = "examples"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+shorterdb.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+
+[[bin]]
+name = "repl"
+path = "src/repl.rs"
+
+[[bin]]
+name = "embedded"
+path = "src/embedded.rs"

@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 - **Persistent** — Data is durably stored with Write-Ahead Logging
 - **Fast reads** — In-memory caching with automatic background flushing
 - **Simple API** — Only `get`, `set`, and `delete` operations
-- **gRPC support** — Optional remote access (see examples)
+- **gRPC support** — Optional remote access via `shorterdb-grpc` crate
 
 ## Installation
 
@@ -47,21 +47,60 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-shorterdb = "0.1.0"
+shorterdb = "0.2.0"
+```
+
+## Workspace Structure
+
+This project is organized as a Cargo workspace:
+
+```
+shorterdb/
+├── crates/
+│   ├── shorterdb/          # Core database engine (minimal dependencies)
+│   └── shorterdb-grpc/     # gRPC server (optional networking)
+└── examples/               # Usage examples
+```
+
+### Building
+
+```bash
+# Build just the core engine (fast, minimal deps)
+cargo build -p shorterdb
+
+# Build the gRPC server
+cargo build -p shorterdb-grpc
+
+# Build everything
+cargo build --workspace
+
+# Run tests
+cargo test --workspace
+```
+
+### Running the gRPC Server
+
+```bash
+# Using cargo
+cargo run -p shorterdb-grpc
+
+# Using Docker
+docker build -t shorterdb-grpc .
+docker run -p 50051:50051 shorterdb-grpc
 ```
 
 ## Examples
 
 Check out the [`examples/`](examples/) directory:
 
-- **[embedded](examples/embedded)** — Basic usage
-- **[grpc](examples/grpc)** — Remote access via gRPC
-- **[repl_csv](examples/repl_csv)** — CSV import with REPL
+- **[embedded](examples/embedded.rs)** — Basic embedded database usage
+- **[repl](examples/repl.rs)** — Interactive REPL for testing
 
 Run an example:
 
 ```bash
-cargo run --example embedded
+cargo run -p shorterdb --example embedded
+cargo run -p shorterdb --example repl
 ```
 
 ## Documentation
