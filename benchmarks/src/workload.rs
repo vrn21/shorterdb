@@ -107,7 +107,6 @@ pub fn run_sequential_write<D: Database>(
 mod tests {
     use super::*;
     use crate::config::BenchmarkConfig;
-    use std::path::PathBuf;
     use tempfile::TempDir;
 
     // Mock database for testing

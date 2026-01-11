@@ -10,3 +10,4 @@ test_db/
 target
 repl_db
 example_db
+benchmark_data

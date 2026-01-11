@@ -32,8 +32,8 @@ pub struct BenchmarkConfig {
 impl Default for BenchmarkConfig {
     fn default() -> Self {
         Self {
-            num_pairs: 1_000_000,
-            value_size: 100,
+            num_pairs: 10_000, // Small number for testing
+            value_size: 100,   // 100 bytes per value
             data_dir: PathBuf::from("benchmark_data"),
             results_dir: PathBuf::from("results"),
         }
@@ -101,7 +101,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = BenchmarkConfig::default();
-        assert_eq!(config.num_pairs, 1_000_000);
+        assert_eq!(config.num_pairs, 10_000);
         assert_eq!(config.value_size, 100);
     }
 

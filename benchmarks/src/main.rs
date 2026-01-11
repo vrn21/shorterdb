@@ -12,6 +12,7 @@ mod runners;
 mod workload;
 
 use config::BenchmarkConfig;
+use db::Database;
 use runners::{RocksDBRunner, ShorterDBRunner};
 use workload::run_sequential_write;
 
@@ -69,11 +70,11 @@ fn main() -> Result<()> {
     // Print results
     println!("\n=== Results ===");
 
-    if let Some(result) = shorterdb_result {
+    if let Some(ref result) = shorterdb_result {
         result.print();
     }
 
-    if let Some(result) = rocksdb_result {
+    if let Some(ref result) = rocksdb_result {
         result.print();
     }
 
@@ -82,9 +83,9 @@ fn main() -> Result<()> {
         println!("\n=== Comparison ===");
         let speedup = sdb.ops_per_sec / rdb.ops_per_sec;
         if speedup > 1.0 {
-            println!("ShorterDB is {:.2}x faster", speedup);
+            println!("ShorterDB is {:.5}x faster", speedup);
         } else {
-            println!("RocksDB is {:.2}x faster", 1.0 / speedup);
+            println!("RocksDB is {:.5}x faster", 1.0 / speedup);
         }
     }
 

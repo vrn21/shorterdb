@@ -26,11 +26,11 @@ impl Database for ShorterDBRunner {
     }
 
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        self.db.get(key)
+        Ok(self.db.get(key)?)
     }
 
     fn delete(&mut self, key: &[u8]) -> Result<bool> {
-        self.db.delete(key)
+        Ok(self.db.delete(key)?)
     }
 
     fn flush(&mut self) -> Result<()> {
