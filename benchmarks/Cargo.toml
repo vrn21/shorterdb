@@ -1,0 +1,23 @@
+[package]
+name = "benchmarks"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "bench"
+path = "src/main.rs"
+
+[dependencies]
+# Local workspace dependency
+shorterDB.workspace = true
+
+# Database implementations
+rocksdb = "0.22"
+
+# External dependencies
+anyhow.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+tempfile = "3.0"

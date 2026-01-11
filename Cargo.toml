@@ -4,6 +4,7 @@ members = [
     "crates/shorterdb",
     "crates/shorterdb-grpc",
     "crates/examples",
+    "benchmarks",
 ]
 
 # Shared metadata for crates.io publishing
@@ -24,6 +25,7 @@ crossbeam-skiplist = "0.1"
 thiserror = "1.0"
 log = "0.4"
 anyhow = "1.0"
+rand = "0.8"
 clap = { version = "4.0", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 tonic = "0.11"
