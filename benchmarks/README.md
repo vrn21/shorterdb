@@ -1,63 +1,42 @@
-# Benchmarks
+# ShorterDB Benchmarks
 
-Performance benchmarking suite for ShorterDB vs RocksDB.
+A high-performance benchmarking suite comparing **ShorterDB** (an embedded LSM-Tree key-value store in Rust) against **RocksDB**.
 
-## Phase 1: Foundation (Current)
+## Features
 
-Foundation components for benchmarking:
-- ✅ Configuration system with validation
-- ✅ Deterministic data generation
-- ✅ Database trait abstraction
-- ⏳ Database implementations (Phase 2)
-- ⏳ Workload execution (Phase 3)
-- ⏳ Metrics and reporting (Phase 4)
+- **Embedded Mode**: Runs both databases in embedded mode for fair comparison.
+- **Deterministic Data**: Uses seeded RNG for reproducible benchmarks.
+- **Comprehensive Workloads**:
+  - **Sequential Write**: Populate with 1,000,000 key-value pairs
+  - **Random Read**: 500,000 read operations (50% coverage)
+  - **Random Update**: 100,000 update operations (10% coverage)
+  - **Random Delete**: 50,000 delete operations (5% coverage)
+- **Metrics**: Throughput (ops/sec) and total duration.
 
-## Quick Start
+## Usage
 
-```bash
-# Run Phase 1 validation
-cargo run -p benchmarks
-
-# To customize config, edit the values in src/main.rs
-```
-
-## Testing
+To run the full benchmark suite:
 
 ```bash
-# Run unit tests
-cargo test -p benchmarks
-
-# Check compilation
-cargo check -p benchmarks
-
-# Run with debug output
-RUST_LOG=debug cargo run -p benchmarks
+cargo run --release -p benchmarks
 ```
 
-## Configuration
+> **Note**: Always use `--release` for accurate performance measurements.
 
-Default configuration in `src/main.rs`:
-- **num_pairs**: 1,000,000
-- **value_size**: 100 bytes
-- **data_dir**: `./benchmark_data`
-- **results_dir**: `./results`
+### Customization
 
-To customize, edit the config in `main.rs`.
+The default configuration uses 1M key-value pairs with 100-byte values. To customize the parameters, edit the configuration in `src/main.rs`:
 
-## Development
+```rust
+let config = BenchmarkConfig {
+    num_pairs: 10_000_000, // Increase dataset size
+    value_size: 1024,      // Increase value size
+    ..BenchmarkConfig::default()
+};
+```
 
-This is a workspace member. See main repo README for workspace setup.
+## Requirements
 
-### Code Organization
-
-- `config.rs`: Configuration with validation
-- `data.rs`: Deterministic data generation
-- `db.rs`: Database trait (implementations in Phase 2)
-- `main.rs`: CLI entry point
-
-### Design Principles
-
-- Simple and robust over clever
-- Fail fast with clear errors
-- No premature optimization
-- Idiomatic Rust patterns
+- **RocksDB**: Requires `librocksdb` installed on your system.
+  - macOS: `brew install rocksdb`
+  - Linux: `sudo apt-get install librocksdb-dev`
